@@ -499,12 +499,12 @@ func renderKV(in RenderInput) ([]File, Tuning, error) {
 	acl := "user default on " + hashes + " ~* &* +@all -config -debug -module\n"
 
 	return []File{
-			{Path: kvConfPath, Mode: 0o640, Content: w.String()},
-			{Path: kvACLPath, Mode: 0o600, Content: acl},
-		}, Tuning{
-			"memory_mb":        strconv.FormatInt(mib(in.MemoryBytes), 10),
-			"maxmemory":        strconv.FormatInt(maxmem, 10),
-			"maxmemory_policy": eviction,
-			"persistence":      persistence,
-		}, nil
+		{Path: kvConfPath, Mode: 0o640, Content: w.String()},
+		{Path: kvACLPath, Mode: 0o600, Content: acl},
+	}, Tuning{
+		"memory_mb":        strconv.FormatInt(mib(in.MemoryBytes), 10),
+		"maxmemory":        strconv.FormatInt(maxmem, 10),
+		"maxmemory_policy": eviction,
+		"persistence":      persistence,
+	}, nil
 }
