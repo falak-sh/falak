@@ -63,6 +63,10 @@ final class Exporter
         }
 
         foreach ($units as $unit => $body) {
+            if (isset($body['image'], $body['build']) && ($siteId = $scope->refId((string) $unit)) !== null && $this->sites->find($siteId)?->repository === null) {
+                unset($body['build']); // an image unit: with a build, a unit created from the export would build instead
+            }
+
             // type first, as people write it
             $units[$unit] = ['type' => $body['type'] ?? 'app', ...array_diff_key($body, ['type' => true])];
         }

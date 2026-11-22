@@ -113,7 +113,7 @@ push ─▶ environments bound to the branch ─▶ read the file at the commit 
    release.
 5. **Deploy** each unit that changed: files under its `root` changed in the push, or its config changed. Units that
    didn't change are not redeployed. (When the push can't list its files — Bitbucket, a force push, 20 commits or
-   more — every unit counts as changed.)
+   more — every unit counts as changed.) An [image unit](#image-units) deploys its image: nothing is built.
 6. **Phase B**, when each unit's release is live (every server activated and the health checks passed): workers,
    daemons, schedules, domains, redirects, headers, mounts, function schedules, Laravel's scheduler/Horizon/Octane.
    A failed deployment never gets them, and a phase B that fails fails the run.
@@ -208,7 +208,7 @@ units:
 | `php` / `node` | PHP version (`"8.4"`) / Node.js major version (`"22"`), among the versions the installation offers | the installation's |
 | `web_directory` | The public directory served, relative to the release (`public`). A `static` unit built natively ships its build output (`dist/`, `build/`…) as the release itself: leave it unset | the framework's |
 | `port` | `docker` runtime: the port the app listens on inside its container | — |
-| `image` | `docker` runtime: deploy this prebuilt image instead of building (`ghcr.io/acme/web:1.2`) | — |
+| `image` | `docker` runtime, without `build`: deploy this prebuilt image instead of building (`ghcr.io/acme/web:1.2`), see [Image units](#image-units) | — |
 | `health_path` | The unit's health path: deploys wait for it on the new release (unless `deploy.health.path` is set), and the edge checks it to keep each server in rotation (2xx only, so not a path that redirects) | deploys check `/`; no edge check |
 | `test_domain` | Also serve on the installation's test domain | `true` |
 | `build.mode` | `native` (Railpack on a builder), `docker` (an image from a Dockerfile) or `on-server` (built on each server) | `native` |
@@ -225,6 +225,30 @@ units:
 A unit the file adds is created as the dashboard would create it: a Laravel unit (framework `laravel`; not a docker or
 compose unit, whose image is opaque to Falak: give those `APP_KEY: ${{ secrets.APP_KEY }}`) gets a generated `APP_KEY`, `APP_NAME`
 and `APP_URL` unless the file sets them.
+
+#### Image units
+
+A `docker` unit with an `image` and no `build` deploys that image, and nothing is built:
+
+```yaml
+units:
+  web: { type: app, runtime: docker, image: "ghcr.io/acme/web:1.2", port: 8080 }
+```
+
+- **A new unit** gets no repository (Settings → Source shows "No repository"). Pushes to the config repository deploy
+  it like any unit: when files under its `root` or its config changed. A server that already has the image doesn't
+  pull it again, so release a new tag (or a digest) rather than pushing the same tag again.
+- **An existing unit** that builds stops building when a run sets or changes its `image` and the file gives it no
+  `build`: the site loses its repository and the deploy key that went with it. While its image stays the same it
+  keeps building (also one an older Falak created from `image` alone): upgrading Falak never swaps what a site runs.
+  To switch such a site without changing the image, set Settings → Source to "No repository".
+- **`build` beside `image`** (an empty `build: {}` doesn't count) means the unit builds from the repository, and the
+  image is not deployed. An environment's override can drop a build with `build: null`. Adding `build` to a unit that
+  is already an image unit doesn't make it build (the run warns): connect the repository under Settings → Source, or
+  give the unit another key.
+- **Without a repository**, only config runs deploy it on a push: a file that can't be read or is invalid, a released
+  environment or a disabled source has no push to deploy to fall back to (the running release stays). Pull requests
+  get previews only while another unit of the previews' base environment builds from the repository.
 
 ### `compose` units
 
@@ -719,8 +743,8 @@ file existed restores the code only (warning `rollback.no_config`).
   (changes made while it was off show in that plan).
 - **Adopting** a running project: `falak config export -e production -o falak.yaml`, commit, enable, push. The export
   holds today's state (units, the environment with its branch, previews), so the first run's plan is empty: nothing is
-  redeployed beyond the push's own deployment, nothing is deleted. Exports without the `sites.env.view` permission leave
-  literal env values out (references are kept), which also plans empty.
+  redeployed beyond the push's own deployment, nothing is deleted. An image unit is exported without `build`. Exports
+  without the `sites.env.view` permission leave literal env values out (references are kept), which also plans empty.
 
 ## The CLI
 
