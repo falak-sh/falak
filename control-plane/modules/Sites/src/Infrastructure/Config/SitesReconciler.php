@@ -387,8 +387,13 @@ final class SitesReconciler implements Reconcilable, ValidatesConfig
         }
 
         // [decision] A function's code comes from the repository through Functions (a version per code change): its
-        // site deploys versions, not the repository.
-        $fromRepository = $runtime !== SiteRuntime::Function;
+        // site deploys versions, not the repository. A docker unit with an `image` and no `build` deploys that image:
+        // its site gets no repository, since a site with one builds it. Config still deploys both on push.
+        $fromRepository = match ($runtime) {
+            SiteRuntime::Function => false,
+            SiteRuntime::Docker => ! isset($body['image']) || ! empty($body['build']),
+            default => true,
+        };
 
         if ($fromRepository && $scope->repository !== null && $scope->branch === null) {
             throw ValidationException::withMessages(["units.{$unit}" => "Unit {$unit} can't be created: the environment {$scope->environment} has no `branch` to deploy."]);
@@ -473,6 +478,10 @@ final class SitesReconciler implements Reconcilable, ValidatesConfig
         }
 
         if ($attributes !== []) {
+            if (self::stopsBuilding($site, $attributes, $desired)) {
+                $attributes = [...$attributes, 'source_connection_id' => null, 'repository' => null, 'branch' => null];
+            }
+
             app(UpdateSite::class)($site, $attributes);
             $site->refresh();
         }
@@ -505,6 +514,22 @@ final class SitesReconciler implements Reconcilable, ValidatesConfig
         if ($compose !== [] && $site->runtime === SiteRuntime::Compose) {
             app(UpdateComposeSettings::class)($site->refresh(), $this->composeUpdate($site, $scope, $desired, $compose), $ctx->actorId);
         }
+    }
+
+    /**
+     * **[decision]** A docker site that builds stops when the file sets or changes its image without a `build`: it
+     * loses its repository, like an image unit the file creates. One whose image stays the same keeps building, so
+     * upgrading Falak or adopting a file never swaps what a site runs.
+     *
+     * @param  array<string, mixed>  $attributes  what is saved (unchanged values too when nothing changes)
+     * @param  array<string, mixed>  $desired  every field the file sets: pointer relative to the unit => value
+     */
+    private static function stopsBuilding(Site $site, array $attributes, array $desired): bool
+    {
+        $image = $attributes['docker_image'] ?? null;
+
+        return $site->runtime === SiteRuntime::Docker && $site->repository !== null && $image !== null && $image !== $site->docker_image
+            && array_filter(array_keys($desired), fn (string $path) => str_starts_with($path, '/build/')) === [];
     }
 
     /**
@@ -693,6 +718,10 @@ final class SitesReconciler implements Reconcilable, ValidatesConfig
 
             if (isset($body['build']['mode']) && $runtime !== null && ($mode = BuildMode::tryFrom((string) $body['build']['mode'])) !== null && ! in_array($mode, $runtime->buildModes(), true)) {
                 $issues[] = ConfigIssue::error('value.unsupported', "{$base}/build/mode", "{$runtime->label()} units can't use {$mode->label()} builds.");
+            }
+
+            if (! empty($body['build']) && $site?->runtime === SiteRuntime::Docker && $site->repository === null && $site->docker_image !== null) {
+                $issues[] = ConfigIssue::warning('value.unsupported', "{$base}/build", "The unit {$unit} deploys an image and has no repository to build: `build` is ignored. Connect the repository under Settings → Source to build it, or give the unit another key.");
             }
 
             if (isset($body['deploy']['hooks']) && $runtime !== null && $runtime->usesDocker()) {
